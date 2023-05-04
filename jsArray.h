@@ -57,6 +57,12 @@ private:
     };
 
     template<typename F>
+    using vectorEligibleCallbackReturn_t = std::remove_reference_t<typename function_traits<F>::return_t>;
+
+    template<typename F>
+    using callBackReturnTypeNonConst_t = std::remove_const_t<typename function_traits<F>::return_t>;
+
+    template<typename F>
     inline typename function_traits<F>::return_t standardCallbackHandler(F callback, std::size_t index) const noexcept
     {
         constexpr std::size_t argsCount = function_traits<F>::argsCount;
@@ -78,7 +84,7 @@ private:
     }
 
     template<typename F>
-    inline typename function_traits<F>::return_t reduceCallbackHandler(F callback, const typename function_traits<F>::return_t& accumulator, std::size_t index) const noexcept
+    inline typename function_traits<F>::return_t reduceCallbackHandler(F callback, callBackReturnTypeNonConst_t<F>& accumulator, std::size_t index) const noexcept
     {
         constexpr std::size_t argsCount = function_traits<F>::argsCount;
         if constexpr (argsCount == 2)
@@ -101,12 +107,6 @@ private:
 public:
 
     using std::vector<T, AllocTemplate<T>>::vector; // inherit all constructors from std::vector
-
-    template<typename F>
-    using vectorEligibleCallbackReturn_t = std::remove_reference_t<typename function_traits<F>::return_t>;
-
-    template<typename F>
-    using callBackReturnTypeNonConst_t = std::remove_const_t<typename function_traits<F>::return_t>;
 
     template<typename F>
     inline JSArray<vectorEligibleCallbackReturn_t<F>, AllocTemplate> map(F callback) const noexcept
@@ -182,11 +182,24 @@ public:
         return result;
     }
 
+    inline JSArray<T, AllocTemplate>& sort() noexcept
+    {
+        std::sort(this->begin(), this->end(), [](const T& a, const T& b){return a < b;});
+        return *this;
+    }
+
     template<typename F>
     inline JSArray<T, AllocTemplate>& sort(F compareFunc) noexcept
     {
         std::sort(this->begin(), this->end(), compareFunc);
         return *this;
+    }
+
+    inline JSArray<T, AllocTemplate> toSorted() const noexcept
+    {
+        JSArray<T, AllocTemplate> result = *this;
+        std::sort(result.begin(), result.end(), [](const T& a, const T& b){return a < b;});
+        return result;
     }
 
     template<typename F>
