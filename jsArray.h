@@ -4,6 +4,18 @@
 #include <type_traits>
 #include <algorithm>
 
+/**
+ * Quirks:
+ * all functions, excepts the sort functions, don't allow
+ * callbacks with auto parameters.
+ * Why? I can't seem to figure out a way to be able to extract
+ * the correct information out of these callbacks (return type
+ * and number of arguments). Maybe one day this will be possible
+ * but I just ran out of skill here. Therefore for all
+ * the callbacks, you must define types and CANNOT use auto.
+ * 
+ */
+
 // nested "template<typename> class" is so when a new JSArray is made by map
 // with a different return type, it still uses the correct allocator (std::allocator
 // is itself a template class that accepts a type)
