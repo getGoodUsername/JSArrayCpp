@@ -75,15 +75,15 @@ private:
     using callBackReturnTypeNonConst_t = std::remove_const_t<typename function_traits<F>::return_t>;
 
     template<typename F>
-    inline typename function_traits<F>::return_t standardCallbackHandler(F callback, std::size_t index) const noexcept
+    inline typename function_traits<F>::return_t standardCallbackHandler(F callback, std::size_t currLoopIndex) const noexcept
     {
         constexpr std::size_t argsCount = function_traits<F>::argsCount;
         if constexpr (argsCount == 1)
-            return callback((*this)[index]);
+            return callback((*this)[currLoopIndex]);
         if constexpr (argsCount == 2)
-            return callback((*this)[index], index);
+            return callback((*this)[currLoopIndex], currLoopIndex);
         if constexpr (argsCount == 3)
-            return callback((*this)[index], index, *this);
+            return callback((*this)[currLoopIndex], currLoopIndex, *this);
 
         static_assert(
             argsCount <= 3 && argsCount >= 1,
@@ -96,15 +96,15 @@ private:
     }
 
     template<typename F>
-    inline typename function_traits<F>::return_t reduceCallbackHandler(F callback, callBackReturnTypeNonConst_t<F>& accumulator, std::size_t index) const noexcept
+    inline typename function_traits<F>::return_t reduceCallbackHandler(F callback, callBackReturnTypeNonConst_t<F>& accumulator, std::size_t currLoopIndex) const noexcept
     {
         constexpr std::size_t argsCount = function_traits<F>::argsCount;
         if constexpr (argsCount == 2)
-            return callback(accumulator, (*this)[index]);
+            return callback(accumulator, (*this)[currLoopIndex]);
         if constexpr (argsCount == 3)
-            return callback(accumulator, (*this)[index], index);
+            return callback(accumulator, (*this)[currLoopIndex], currLoopIndex);
         if constexpr (argsCount == 4)
-            return callback(accumulator, (*this)[index], index, *this);
+            return callback(accumulator, (*this)[currLoopIndex], currLoopIndex, *this);
 
         static_assert(
             argsCount <= 4 && argsCount >= 2,
@@ -154,6 +154,15 @@ public:
         }
 
         return result;
+    }
+
+    template<typename F>
+    inline void forEach(F callback)
+    {
+        for (std::size_t i = 0; i < this->size(); i += 1)
+        {
+            this->standardCallbackHandler(callback, i);
+        }
     }
 
     template<typename F>
