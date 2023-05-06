@@ -5,23 +5,29 @@
 #include <algorithm>
 
 /**
- * Quirks:
- * all functions, excepts the sort functions, don't allow
- * callbacks with auto parameters.
- * Why? I can't seem to figure out a way to be able to extract
- * the correct information out of these callbacks (return type
- * and number of arguments). Maybe one day this will be possible
- * but I just ran out of skill here. Therefore for all
- * the callbacks, you must define types and CANNOT use auto.
+ * @brief A dynamic array class to emulate key java script array
+ * methods like map and reduce. Class inherits publicly from std::vector.
  * 
+ * @tparam T                element type of dynamic array. (ex. int, JS<int>, double, std::string)
+ * @tparam AllocTemplate    allocator template class accepting only one template paramater "T" element type (ex. std::allocator)
+ * 
+ * @warning
+ * All functions, excepts the sort functions, don't allow
+ * callbacks with auto parameters.
+ * Why? All the other functions accept three different versions
+ * of the callback, and due to this I have to figure out
+ * how many arguments the callback takes at compile time before
+ * using it. The problem is that I can't seem to figure out a
+ * way to extract this information when the callback uses
+ * auto in it's parameters. Maybe one day this feature will be
+ * added but I just ran out of skill here. Therefore for all
+ * the callbacks, you must define types and CANNOT use auto for
+ * parameters (return type of auto is fine though).
  */
-
-// nested "template<typename> class" is so when a new JSArray is made by map
-// with a different return type, it still uses the correct allocator (std::allocator
-// is itself a template class that accepts a type)
 template<typename T, template<typename> class AllocTemplate = std::allocator>
 class JSArray : public std::vector<T, AllocTemplate<T>>
 {
+    // function_traits meta-programming heavily influenced from: https://stackoverflow.com/a/7943765
 private:
     // base
     template <typename F>
@@ -31,7 +37,7 @@ private:
     template <typename R, typename... Args>
     struct function_traits<R(Args...)>
     {
-        using return_t = R;
+        using return_type = R;
         static constexpr std::size_t argsCount = sizeof...(Args);
     };
 
@@ -41,6 +47,13 @@ private:
      * which is a thing not only for functors (objects with operator() defined)
      * but also lambdas as they are also basically functors in some ways
      * (look at cpp reference website)
+     * 
+     * fails with lambdas containing auto parameters since the func "operator()"
+     * can now be overloaded (with template arguments) and decltype can't know
+     * which types it will be overloaded with, and you can't define types
+     * to overload operator() with since there is obviously the case where
+     * the lambda does not have auto parameters and that won't work. so yeah
+     * just stuck with no auto...
      */
     template <typename F>
     struct function_traits : public function_traits<decltype(&F::operator())> {};
@@ -56,7 +69,7 @@ private:
     template <typename C, typename R, typename... Args>
     struct function_traits<R(C::*)(Args...)>
     {
-        using return_t = R;
+        using return_type = R;
         static constexpr std::size_t argsCount = sizeof...(Args);
     };
 
@@ -64,18 +77,27 @@ private:
     template <typename C, typename R, typename... Args>
     struct function_traits<R(C::*)(Args...) const>
     {
-        using return_t = R;
+        using return_type = R;
         static constexpr std::size_t argsCount = sizeof...(Args);
     };
 
-    template<typename F>
-    using vectorEligibleCallbackReturn_t = std::remove_reference_t<typename function_traits<F>::return_t>;
+
+
+
+    template<typename U>
+    using makeVectorEligibleType = std::remove_reference_t<U>;
+
+    template<typename U>
+    using makeMutableType = std::remove_const_t<U>;
 
     template<typename F>
-    using callBackReturnTypeNonConst_t = std::remove_const_t<typename function_traits<F>::return_t>;
+    using getCallbackReturnType = typename function_traits<F>::return_type;
+
+
+
 
     template<typename F>
-    inline typename function_traits<F>::return_t standardCallbackHandler(F callback, std::size_t currLoopIndex) const noexcept
+    inline getCallbackReturnType<F> standardCallbackHandler(F callback, std::size_t currLoopIndex) const noexcept
     {
         constexpr std::size_t argsCount = function_traits<F>::argsCount;
         if constexpr (argsCount == 1)
@@ -96,8 +118,11 @@ private:
     }
 
     template<typename F>
-    inline typename function_traits<F>::return_t reduceCallbackHandler(F callback, callBackReturnTypeNonConst_t<F>& accumulator, std::size_t currLoopIndex) const noexcept
+    inline getCallbackReturnType<F> reduceCallbackHandler(F callback, std::remove_const_t<getCallbackReturnType<F>>& accumulator, std::size_t currLoopIndex) const noexcept
     {
+        // I remove const from the call back return type to allow the most permissive type to be passed into
+        // callback. Callback will restrict if needed. Also just incase the accumulator type is big/heavy
+
         constexpr std::size_t argsCount = function_traits<F>::argsCount;
         if constexpr (argsCount == 2)
             return callback(accumulator, (*this)[currLoopIndex]);
@@ -120,10 +145,21 @@ public:
 
     using std::vector<T, AllocTemplate<T>>::vector; // inherit all constructors from std::vector
 
+
+    /**
+     * @brief 
+     * 
+     * @tparam F 
+     * @param callback a function ptr
+     * @return JSArray<makeVectorEligibleType<getCallbackReturnType<F>>, AllocTemplate> 
+     * 
+     * @warning
+     * No auto parameters allowed!
+     */
     template<typename F>
-    inline JSArray<vectorEligibleCallbackReturn_t<F>, AllocTemplate> map(F callback) const noexcept
+    inline JSArray<makeVectorEligibleType<getCallbackReturnType<F>>, AllocTemplate> map(F callback) const noexcept
     {
-        JSArray<vectorEligibleCallbackReturn_t<F>, AllocTemplate> result(this->size());
+        JSArray<makeVectorEligibleType<getCallbackReturnType<F>>, AllocTemplate> result(this->size());
         for (std::size_t i = 0; i < this->size(); i += 1)
         {
             result[i] = this->standardCallbackHandler(callback, i);
@@ -133,9 +169,9 @@ public:
     }
 
     template<typename F>
-    inline callBackReturnTypeNonConst_t<F> reduce(F callback, const typename function_traits<F>::return_t& initValue) const noexcept
+    inline getCallbackReturnType<F> reduce(F callback, const getCallbackReturnType<F>& initValue) const noexcept
     {
-        callBackReturnTypeNonConst_t<F> result = initValue;
+        makeMutableType<getCallbackReturnType<F>> result = initValue;
         for (std::size_t i = 0; i < this->size(); i += 1)
         {
             result = this->reduceCallbackHandler(callback, result, i);
@@ -145,9 +181,9 @@ public:
     }
 
     template<typename F>
-    inline callBackReturnTypeNonConst_t<F> reduceRight(F callback, const typename function_traits<F>::return_t& initValue) const noexcept
+    inline getCallbackReturnType<F> reduceRight(F callback, const getCallbackReturnType<F>& initValue) const noexcept
     {
-        callBackReturnTypeNonConst_t<F> result = initValue;
+        makeMutableType<getCallbackReturnType<F>> result = initValue;
         for (std::size_t i = 0; i < this->size(); i += 1)
         {
             result = this->reduceCallbackHandler(callback, result, this->size() - 1 - i);
@@ -168,7 +204,10 @@ public:
     template<typename F>
     inline JSArray<T, AllocTemplate> filter(F callback) const noexcept
     {
-        static_assert(std::is_same_v<callBackReturnTypeNonConst_t<F>, bool>, "callback return type must be bool!!!");
+        static_assert(
+            std::is_same_v<std::remove_cv_t<getCallbackReturnType<F>>, bool>,
+            "callback return type must be bool!!!"
+        );
 
         JSArray<T, AllocTemplate> result;
         for (std::size_t i = 0; i < this->size(); i += 1)
@@ -183,7 +222,11 @@ public:
     template<typename F>
     inline bool every(F callback) const noexcept
     {
-        static_assert(std::is_same_v<callBackReturnTypeNonConst_t<F>, bool>, "callback return type must be bool!!!");
+        static_assert(
+            std::is_same_v<std::remove_cv_t<getCallbackReturnType<F>>, bool>,
+            "callback return type must be bool!!!"
+        );
+
         std::size_t i = 0;
         for (; i < this->size() && this->standardCallbackHandler(callback, i); i += 1) {}
         return i == this->size();
@@ -192,7 +235,10 @@ public:
     template<typename F>
     inline bool some(F callback) const noexcept
     {
-        static_assert(std::is_same_v<callBackReturnTypeNonConst_t<F>, bool>, "callback return type must be bool!!!");
+        static_assert(
+            std::is_same_v<std::remove_cv_t<getCallbackReturnType<F>>, bool>,
+            "callback return type must be bool!!!"
+        );
 
         bool result = false;
         for (std::size_t i = 0; i < this->size() && !result; i += 1)
