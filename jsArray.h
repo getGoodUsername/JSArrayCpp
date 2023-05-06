@@ -41,6 +41,14 @@ private:
         static constexpr std::size_t argsCount = sizeof...(Args);
     };
 
+    // get info from function pointer type
+    template <typename R, typename... Args>
+    struct function_traits<R(*)(Args...)>
+    {
+        using return_type = R;
+        static constexpr std::size_t argsCount = sizeof...(Args);
+    };
+
     /**
      * get info from a functor or lambda. &F::operator() gets
      * the pointer to the member function named "operator()"
@@ -113,7 +121,7 @@ private:
             "return_type (T val)\n"
             "return_type (T val, std::size_t index)\n"
             "return_type (T val, std::size_t index, const JSArray<T, AllocTemplate>& self)\n"
-            "auto is not allowed..."
+            "auto is not allowed!"
         );
     }
 
@@ -137,7 +145,7 @@ private:
             "return_type (T accumulator, T val)\n"
             "return_type (T accumulator, T val, std::size_t index)\n"
             "return_type (T accumulator, T val, std::size_t index, const JSArray<T, AllocTemplate>& self)\n"
-            "auto is not allowed..."
+            "auto is not allowed!"
         );
     }
 
@@ -147,14 +155,17 @@ public:
 
 
     /**
-     * @brief 
+     * @brief creates a new array populated with the results of calling a provided function on every element in the calling array
      * 
-     * @tparam F 
-     * @param callback a function ptr
-     * @return JSArray<makeVectorEligibleType<getCallbackReturnType<F>>, AllocTemplate> 
+     * @tparam F callback type
+     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 1, 2, or 3 arguments
+     * @return JSArray<makeVectorEligibleType<getCallbackReturnType<F>>, AllocTemplate>
      * 
      * @warning
      * No auto parameters allowed!
+     * 
+     * @note
+     * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map#parameters
      */
     template<typename F>
     inline JSArray<makeVectorEligibleType<getCallbackReturnType<F>>, AllocTemplate> map(F callback) const noexcept
@@ -168,6 +179,22 @@ public:
         return result;
     }
 
+    /**
+     * @brief executes a user-supplied "reducer" callback function on each element of the array, in order,
+     * passing in the return value from the calculation on the preceding element. The final result of
+     * running the reducer across all elements of the array is a single value.
+     * 
+     * @tparam F callback type
+     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 2, 3, or 4 arguments
+     * @param initValue initial value for the accumulator param (0th paramater)
+     * @return getCallbackReturnType<F>
+     *
+     * @warning
+     * No auto parameters allowed!
+     * 
+     * @note
+     * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduce#parameters
+     */
     template<typename F>
     inline getCallbackReturnType<F> reduce(F callback, const getCallbackReturnType<F>& initValue) const noexcept
     {
@@ -180,6 +207,20 @@ public:
         return result;
     }
 
+    /**
+     * @brief applies a function against an accumulator and each value of the array (from right-to-left) to reduce it to a single value. 
+     * 
+     * @tparam F callback type
+     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 2, 3, or 4 arguments
+     * @param initValue initial value for the accumulator param (0th paramater)
+     * @return getCallbackReturnType<F>
+     *
+     * @warning
+     * No auto parameters allowed!
+     * 
+     * @note
+     * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduceRight#parameters
+     */
     template<typename F>
     inline getCallbackReturnType<F> reduceRight(F callback, const getCallbackReturnType<F>& initValue) const noexcept
     {
@@ -192,6 +233,18 @@ public:
         return result;
     }
 
+    /**
+     * @brief method executes a provided callback function once for each array element.
+     * 
+     * @tparam F callback type
+     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 1, 2, or 3 arguments
+     * 
+     * @warning
+     * No auto parameters allowed!
+     * 
+     * @note
+     * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/forEach#parameters
+     */
     template<typename F>
     inline void forEach(F callback)
     {
@@ -201,6 +254,19 @@ public:
         }
     }
 
+    /**
+     * @brief creates a copy of a portion of a given array, filtered down to just the elements from the given array that pass the test implemented by the provided function.
+     * 
+     * @tparam F callback type
+     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 1, 2, or 3 arguments
+     * @return JSArray<T, AllocTemplate> 
+     * 
+     * @warning
+     * No auto parameters allowed!
+     * 
+     * @note
+     * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/filter#parameters
+     */
     template<typename F>
     inline JSArray<T, AllocTemplate> filter(F callback) const noexcept
     {
@@ -219,6 +285,19 @@ public:
         return result;
     }
 
+    /**
+     * @brief tests whether all elements in the array pass the test implemented by the provided function.
+     * 
+     * @tparam F callback type
+     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 1, 2, or 3 arguments
+     * @return bool
+     * 
+     * @warning
+     * No auto parameters allowed!
+     * 
+     * @note
+     * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/every#parameters
+     */
     template<typename F>
     inline bool every(F callback) const noexcept
     {
@@ -232,6 +311,21 @@ public:
         return i == this->size();
     }
 
+    /**
+     * @brief tests whether at least one element in the array passes the test implemented by the provided function.
+     * It returns true if, in the array, it finds an element for which the provided function returns true;
+     * otherwise it returns false. It doesn't modify the array. 
+     * 
+     * @tparam F callback type
+     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 1, 2, or 3 arguments
+     * @return bool
+     * 
+     * @warning
+     * No auto parameters allowed!
+     * 
+     * @note
+     * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/some#parameters
+     */
     template<typename F>
     inline bool some(F callback) const noexcept
     {
@@ -249,12 +343,27 @@ public:
         return result;
     }
 
+    /**
+     * @brief sort all the elements inplace in ascending order
+     * 
+     * @return JSArray<T, AllocTemplate>& 
+     */
     inline JSArray<T, AllocTemplate>& sort() noexcept
     {
         std::sort(this->begin(), this->end(), [](const T& a, const T& b){return a < b;});
         return *this;
     }
 
+    /**
+     * @brief sort all the elements inplace according to the callback function
+     * 
+     * @tparam F callback type
+     * @param compareFunc a lambda, a function ptr, or a functor (an object with operator() overloaded) with two arguments
+     * @return JSArray<T, AllocTemplate>& 
+     * 
+     * @note
+     * auto is allowed for the parameters of the callback function.
+     */
     template<typename F>
     inline JSArray<T, AllocTemplate>& sort(F compareFunc) noexcept
     {
@@ -262,6 +371,11 @@ public:
         return *this;
     }
 
+    /**
+     * @brief make a copy of the current array and sort in ascending order.
+     * 
+     * @return JSArray<T, AllocTemplate> 
+     */
     inline JSArray<T, AllocTemplate> toSorted() const noexcept
     {
         JSArray<T, AllocTemplate> result = *this;
@@ -269,6 +383,16 @@ public:
         return result;
     }
 
+    /**
+     * @brief make a copy of the current array and sort according to the callback function
+     * 
+     * @tparam F callback type
+     * @param compareFunc a lambda, a function ptr, or a functor (an object with operator() overloaded) with two arguments
+     * @return JSArray<T, AllocTemplate> 
+     * 
+     * @note
+     * auto is allowed for the parameters of the callback function.
+     */
     template<typename F>
     inline JSArray<T, AllocTemplate> toSorted(F compareFunc) const noexcept
     {
@@ -277,3 +401,37 @@ public:
         return result;
     }
 };
+
+
+/**
+ * maybe one day I'll implement a way to allow for auto by explicitly
+ * requiring the user to tell the called function how many arguments
+ * the passed in function has.
+ * Something like this:
+
+template<std::size_t numOfArgs, typename F, bool isAutoFunctor = true>
+int map(F callback)
+{
+    if constexpr (numOfArgs == 1)
+        return callback(100);
+    if constexpr (numOfArgs == 2)
+        return callback(100, 42);
+    if constexpr (numOfArgs == 3)
+        return callback(100, 42, 10000000);
+}
+
+
+int main(void)
+{
+    auto lambda_1 = [](auto a){return a;};
+    auto lambda_2 = [](auto a, auto b){return a + b;};
+    auto lambda_3 = [](auto a, auto b, auto c){return a + b + c;};
+
+    map<1>(lambda_1);
+    map<2>(lambda_2);
+    map<3>(lambda_3);
+
+    return 0;
+}
+ * 
+ */
