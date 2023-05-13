@@ -11,83 +11,168 @@
  * @tparam T                element type of dynamic array. (ex. int, JS<int>, double, std::string)
  * @tparam AllocTemplate    allocator template class accepting only one template paramater "T" element type (ex. std::allocator)
  * 
- * @warning
- * All functions, excepts the sort functions, don't allow
- * callbacks with auto parameters.
- * Why? All the other functions accept three different versions
- * of the callback, and due to this I have to figure out
- * how many arguments the callback takes at compile time before
- * using it. The problem is that I can't seem to figure out a
- * way to extract this information when the callback uses
- * auto in it's parameters. Maybe one day this feature will be
- * added but I just ran out of skill here. Therefore for all
- * the callbacks, you must define types and CANNOT use auto for
- * parameters (return type of auto is fine though).
+ * @note
+ * AllocTemplate is the way it is so you are allowed to return different types from
+ * .map();
+* 
  */
 template<typename T, template<typename> class AllocTemplate = std::allocator>
 class JSArray : public std::vector<T, AllocTemplate<T>>
 {
-    // function_traits meta-programming heavily influenced from: https://stackoverflow.com/a/7943765
 private:
-    // base
-    template <typename F>
-    struct function_traits;
+// START OF FUNCTION TRAITS META PROGRAMMING CODE
+    // just to convey intention in code
+    using element_t = T;
+    using index_t = std::size_t;
+    using self_t = JSArray<T, AllocTemplate>;
 
-    // get info from "normal" callback function
-    template <typename R, typename... Args>
-    struct function_traits<R(Args...)>
+    // the programer should not use this directly. use StandardCallbackTraits<F>::return_t
+    template<typename F, std::size_t arity>
+    struct GetStandardCallBackReturnType;
+
+    template<typename F>
+    struct GetStandardCallBackReturnType<F, 1> {using type = std::invoke_result_t<F, element_t&>;};
+
+    template<typename F>
+    struct GetStandardCallBackReturnType<F, 2> {using type = std::invoke_result_t<F, element_t&, index_t>;};
+
+    template<typename F>
+    struct GetStandardCallBackReturnType<F, 3> {using type = std::invoke_result_t<F, element_t&, index_t, self_t&>;};
+
+
+
+
+    // the programer should not use this directly. use ReduceCallbackTraits<F, Accumulator_t>::return_t
+    template<typename F, typename Accumulator_t, std::size_t arity>
+    struct GetReduceCallBackReturnType;
+
+    template<typename F, typename Accumulator_t>
+    struct GetReduceCallBackReturnType<F, Accumulator_t, 2> {using type = std::invoke_result_t<F, Accumulator_t&, element_t&>;};
+
+    template<typename F, typename Accumulator_t>
+    struct GetReduceCallBackReturnType<F, Accumulator_t, 3> {using type = std::invoke_result_t<F, Accumulator_t&, element_t&, index_t>;};
+
+    template<typename F, typename Accumulator_t>
+    struct GetReduceCallBackReturnType<F, Accumulator_t, 4> {using type = std::invoke_result_t<F, Accumulator_t&, element_t&, index_t, self_t&>;};
+
+
+    // do this to make it more obvious where char(&)[*number of parameters*] comes from in callback traits structs
+    template<typename... Args>
+    using Arity_Return_t = char(&)[sizeof...(Args)]; // can't return an array from a function, but can return a reference to an array;
+
+
+#if __cplusplus >= 202002L // I am most confident in the version that requires c++20.
+    template<typename F>
+    struct StandardCallbackTraits
     {
-        using return_type = R;
-        static constexpr std::size_t argsCount = sizeof...(Args);
+        /**
+         * this struct (along with ReduceCallbackTraits) was made to allow for auto lambdas,
+         * aka [](auto a, auto b){}; previously the function_traits forced defined types,
+         * and due to the method of meta programming, the callbacks were not allowed to contain auto
+         * parameters. This fixes that, and makes the interfaces just that much easier to use.
+         * 
+         * Note about the following type sequences:
+         * element_t&
+         * element_t& index_t
+         * element_t& index_t self_t&
+         * 
+         * In std::invoke_result_t && std::invocable, as far as I understand it,
+         * these types are the ones that are "passed" into the function, and therefore
+         * I choose the most unconstrained types that the callback function itself
+         * can later choose to constrain with const, volatile, or just straight make a
+         * copy without any reference. There might be the question of "well all the methods
+         * that are being added (map, reduce, etc) are const and therefore I should actually
+         * pass in const element_t& and const self_t&", but I would prefer for the error to be
+         * thrown closer to the calling method than here at the compile time meta programming stage.
+         * Oh also, index_t is not passed as a reference as I don't want the callback mucking
+         * up my index variable. So it must always be passed by value. Having the callback
+         * modify the index can result in very undefined behavior so we won't allow for that.
+         * And in addition there is no later mechanism from the const methods to say that
+         * a reference to index_t is not ok so I have to put my foot down here unfortunately.
+         * 
+         * A note though. r value references are not allowed as types here
+         * tbh I don't feel like I know them well enough to implement them so I'll
+         * stay away.
+         */
+
+
+        // please notice that the template parameters for both the return type and requires clause are the same other than the
+        // the function type "F" in std::invocable. Make sure this is always true.
+        static Arity_Return_t<element_t&>                   test() requires std::invocable<F, element_t&>;
+        static Arity_Return_t<element_t&, index_t>          test() requires std::invocable<F, element_t&, index_t>;
+        static Arity_Return_t<element_t&, index_t, self_t&> test() requires std::invocable<F, element_t&, index_t, self_t&>;
+
+        static constexpr std::size_t arity = sizeof(test());
+        using return_t = typename GetStandardCallBackReturnType<F, arity>::type;
     };
 
-    // get info from function pointer type
-    template <typename R, typename... Args>
-    struct function_traits<R(*)(Args...)>
+    template<typename F, typename Accumulator_t>
+    struct ReduceCallbackTraits
     {
-        using return_type = R;
-        static constexpr std::size_t argsCount = sizeof...(Args);
+        // virtually the same as StandardCallbackTraits except the range of acceptable
+        // arity is [2, 4] and there needs to be an Accumulator_t
+        static Arity_Return_t<Accumulator_t&, element_t&>                   test() requires std::invocable<F, Accumulator_t&, element_t&>;
+        static Arity_Return_t<Accumulator_t&, element_t&, index_t>          test() requires std::invocable<F, Accumulator_t&, element_t&, index_t>;
+        static Arity_Return_t<Accumulator_t&, element_t&, index_t, self_t&> test() requires std::invocable<F, Accumulator_t&, element_t&, index_t, self_t&>;
+
+        static constexpr std::size_t arity = sizeof(test());
+        using return_t = typename GetReduceCallBackReturnType<F, Accumulator_t, arity>::type;
     };
 
-    /**
-     * get info from a functor or lambda. &F::operator() gets
-     * the pointer to the member function named "operator()"
-     * which is a thing not only for functors (objects with operator() defined)
-     * but also lambdas as they are also basically functors in some ways
-     * (look at cpp reference website)
-     * 
-     * fails with lambdas containing auto parameters since the func "operator()"
-     * can now be overloaded (with template arguments) and decltype can't know
-     * which types it will be overloaded with, and you can't define types
-     * to overload operator() with since there is obviously the case where
-     * the lambda does not have auto parameters and that won't work. so yeah
-     * just stuck with no auto...
-     */
-    template <typename F>
-    struct function_traits : public function_traits<decltype(&F::operator())> {};
+// +++++++++++++++++++++++++++++++++++ I am not as confident on the c++17 version, use std++20 if possible +++++++++++++++++++++++++++++++++++ //
+#elif __cplusplus >= 201703
 
-    /**
-     * get info from a pointer to the member function
-     * NEEDED even if don't want to support pointer to the member functions
-     * as a suitable callback as the lambda/functor specialization
-     * use the pointer to the member function mechanism
-     * btw, (C::*) is just like a normal function pointer
-     * type, but it is also saying that the function comes from class C.
-     */
-    template <typename C, typename R, typename... Args>
-    struct function_traits<R(C::*)(Args...)>
+    template<typename F_copy, typename... Ts>
+    using GetNormalFuncType_t = std::invoke_result_t<F_copy, Ts...>(Ts...);
+
+    template<typename F>
+    struct StandardCallbackTraits
     {
-        using return_type = R;
-        static constexpr std::size_t argsCount = sizeof...(Args);
+        /**
+         * as far as I understand, using std::function and overloading
+         * with different types ends up having the same effect in practice
+         * as requires std::invocable. Still I am more confident about the
+         * c++ 20 version that uses "requires std::invocable"
+         */
+
+        // templates on test functions are needed to avoid getting error. This lazy evaluates, with "F_copy",
+        // GetNormalFuncType_t and only when the right overload is chosen, instead of eager evaluating with "F"
+        // and having an error when arity doesn't match.
+        template<typename F_copy>
+        static Arity_Return_t<element_t&>                   test(std::function<GetNormalFuncType_t<F_copy, element_t&>>);
+
+        template<typename F_copy>
+        static Arity_Return_t<element_t&, index_t>          test(std::function<GetNormalFuncType_t<F_copy, element_t&, index_t>>);
+
+        template<typename F_copy>
+        static Arity_Return_t<element_t&, index_t, self_t&> test(std::function<GetNormalFuncType_t<F_copy, element_t&, index_t, self_t&>>);
+
+        static constexpr std::size_t arity = sizeof(test<F>(std::declval<F>()));
+        using return_t = typename GetStandardCallBackReturnType<F, arity>::type;
     };
 
-    // for const member functions.
-    template <typename C, typename R, typename... Args>
-    struct function_traits<R(C::*)(Args...) const>
+    template<typename F, typename Accumulator_t>
+    struct ReduceCallbackTraits
     {
-        using return_type = R;
-        static constexpr std::size_t argsCount = sizeof...(Args);
+        template<typename F_copy>
+        static Arity_Return_t<Accumulator_t&, element_t&>                   test(std::function<GetNormalFuncType_t<F_copy, Accumulator_t&, element_t&>>);
+
+        template<typename F_copy>
+        static Arity_Return_t<Accumulator_t&, element_t&, index_t>          test(std::function<GetNormalFuncType_t<F_copy, Accumulator_t&, element_t&, index_t>>);
+
+        template<typename F_copy>
+        static Arity_Return_t<Accumulator_t&, element_t&, index_t, self_t&> test(std::function<GetNormalFuncType_t<F_copy, Accumulator_t&, element_t&, index_t, self_t&>>);
+
+        static constexpr std::size_t arity = sizeof(test<F>(std::declval<F>()));
+        using return_t = typename GetReduceCallBackReturnType<F, Accumulator_t, arity>::type;
     };
+#endif
+// END OF FUNCTION TRAITS META PROGRAMMING CODE
+
+
+
+
+
 
 
 
@@ -98,16 +183,11 @@ private:
     template<typename U>
     using makeMutableType = std::remove_const_t<U>;
 
-    template<typename F>
-    using getCallbackReturnType = typename function_traits<F>::return_type;
-
-
-
 
     template<typename F>
-    inline getCallbackReturnType<F> standardCallbackHandler(F callback, std::size_t currLoopIndex) const noexcept
+    inline typename StandardCallbackTraits<F>::return_t standardCallbackHandler(F callback, std::size_t currLoopIndex) const noexcept
     {
-        constexpr std::size_t argsCount = function_traits<F>::argsCount;
+        constexpr std::size_t argsCount = StandardCallbackTraits<F>::arity;
         if constexpr (argsCount == 1)
             return callback((*this)[currLoopIndex]);
         if constexpr (argsCount == 2)
@@ -121,17 +201,19 @@ private:
             "return_type (T val)\n"
             "return_type (T val, std::size_t index)\n"
             "return_type (T val, std::size_t index, const JSArray<T, AllocTemplate>& self)\n"
-            "auto is not allowed!"
         );
     }
 
-    template<typename F>
-    inline getCallbackReturnType<F> reduceCallbackHandler(F callback, std::remove_const_t<getCallbackReturnType<F>>& accumulator, std::size_t currLoopIndex) const noexcept
+    template<typename F, typename Accumulator_t>
+    inline typename ReduceCallbackTraits<F, Accumulator_t>::return_t reduceCallbackHandler(F callback, std::remove_const_t<Accumulator_t>& accumulator, std::size_t currLoopIndex) const noexcept
     {
-        // I remove const from the call back return type to allow the most permissive type to be passed into
-        // callback. Callback will restrict if needed. Also just incase the accumulator type is big/heavy
+        // I remove const from Accumulator_t to allow the most permissive type to be passed into
+        // callback. Remember this is the "actual" accumulator variable and it's declared and defined internally.
+        // The accumulator declared by the callback acts as nothing more than accessor. The callback will
+        // restrict with cv qualifiers if needed. Also make sure its a ref just incase the accumulator
+        //  type is big and heavy to minimize copying.
 
-        constexpr std::size_t argsCount = function_traits<F>::argsCount;
+        constexpr std::size_t argsCount = ReduceCallbackTraits<F, Accumulator_t>::arity;
         if constexpr (argsCount == 2)
             return callback(accumulator, (*this)[currLoopIndex]);
         if constexpr (argsCount == 3)
@@ -142,17 +224,16 @@ private:
         static_assert(
             argsCount <= 4 && argsCount >= 2,
             "\nFunction signature should look like either of these three:\n"
-            "return_type (T accumulator, T val)\n"
-            "return_type (T accumulator, T val, std::size_t index)\n"
-            "return_type (T accumulator, T val, std::size_t index, const JSArray<T, AllocTemplate>& self)\n"
-            "auto is not allowed!"
+            "return_type (*A Type* accumulator, T val)\n"
+            "return_type (*A Type* accumulator, T val, std::size_t index)\n"
+            "return_type (*A Type* accumulator, T val, std::size_t index, const JSArray<T, AllocTemplate>& self)\n"
         );
     }
 
 public:
 
     // if confused about this line go here: https://en.cppreference.com/w/cpp/language/using_declaration
-    using std::vector<T, AllocTemplate<T>>::vector; // inherit all constructors from std::vector
+    using std::vector<element_t, AllocTemplate<element_t>>::vector; // inherit all constructors from std::vector
 
 
     /**
@@ -169,9 +250,9 @@ public:
      * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map#parameters
      */
     template<typename F>
-    inline JSArray<makeVectorEligibleType<getCallbackReturnType<F>>, AllocTemplate> map(F callback) const noexcept
+    inline JSArray<makeVectorEligibleType<typename StandardCallbackTraits<F>::return_t>, AllocTemplate> map(F callback) const noexcept
     {
-        JSArray<makeVectorEligibleType<getCallbackReturnType<F>>, AllocTemplate> result(this->size());
+        JSArray<makeVectorEligibleType<typename StandardCallbackTraits<F>::return_t>, AllocTemplate> result(this->size());
         for (std::size_t i = 0; i < this->size(); i += 1)
         {
             result[i] = this->standardCallbackHandler(callback, i);
@@ -196,13 +277,13 @@ public:
      * @note
      * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduce#parameters
      */
-    template<typename F>
-    inline getCallbackReturnType<F> reduce(F callback, const getCallbackReturnType<F>& initValue) const noexcept
+    template<typename F, typename Accumulator_t>
+    inline Accumulator_t reduce(F callback, const Accumulator_t& initValue) const noexcept
     {
-        makeMutableType<getCallbackReturnType<F>> result = initValue;
+        makeMutableType<Accumulator_t> result = initValue;
         for (std::size_t i = 0; i < this->size(); i += 1)
         {
-            result = this->reduceCallbackHandler(callback, result, i);
+            result = this->reduceCallbackHandler<F, Accumulator_t>(callback, result, i);
         }
 
         return result;
@@ -222,13 +303,13 @@ public:
      * @note
      * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduceRight#parameters
      */
-    template<typename F>
-    inline getCallbackReturnType<F> reduceRight(F callback, const getCallbackReturnType<F>& initValue) const noexcept
+    template<typename F, typename Accumulator_t>
+    inline Accumulator_t reduceRight(F callback, const Accumulator_t& initValue) const noexcept
     {
-        makeMutableType<getCallbackReturnType<F>> result = initValue;
+        makeMutableType<Accumulator_t> result = initValue;
         for (std::size_t i = 0; i < this->size(); i += 1)
         {
-            result = this->reduceCallbackHandler(callback, result, this->size() - 1 - i);
+            result = this->reduceCallbackHandler<F, Accumulator_t>(callback, result, this->size() - 1 - i);
         }
 
         return result;
@@ -269,14 +350,14 @@ public:
      * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/filter#parameters
      */
     template<typename F>
-    inline JSArray<T, AllocTemplate> filter(F callback) const noexcept
+    inline JSArray<element_t, AllocTemplate> filter(F callback) const noexcept
     {
         static_assert(
-            std::is_same_v<std::remove_cv_t<getCallbackReturnType<F>>, bool>,
+            std::is_same_v<std::remove_cv_t<typename StandardCallbackTraits<F>::return_t>, bool>,
             "callback return type must be bool!!!"
         );
 
-        JSArray<T, AllocTemplate> result;
+        JSArray<element_t, AllocTemplate> result;
         for (std::size_t i = 0; i < this->size(); i += 1)
         {
             if (this->standardCallbackHandler(callback, i))
@@ -303,7 +384,7 @@ public:
     inline bool every(F callback) const noexcept
     {
         static_assert(
-            std::is_same_v<std::remove_cv_t<getCallbackReturnType<F>>, bool>,
+            std::is_same_v<std::remove_cv_t<typename StandardCallbackTraits<F>::return_t>, bool>,
             "callback return type must be bool!!!"
         );
 
@@ -331,7 +412,7 @@ public:
     inline bool some(F callback) const noexcept
     {
         static_assert(
-            std::is_same_v<std::remove_cv_t<getCallbackReturnType<F>>, bool>,
+            std::is_same_v<std::remove_cv_t<typename StandardCallbackTraits<F>::return_t>, bool>,
             "callback return type must be bool!!!"
         );
 
@@ -349,9 +430,9 @@ public:
      * 
      * @return JSArray<T, AllocTemplate>& 
      */
-    inline JSArray<T, AllocTemplate>& sort() noexcept
+    inline JSArray<element_t, AllocTemplate>& sort() noexcept
     {
-        std::sort(this->begin(), this->end(), [](const T& a, const T& b){return a < b;});
+        std::sort(this->begin(), this->end(), [](const element_t& a, const element_t& b){return a < b;});
         return *this;
     }
 
@@ -366,7 +447,7 @@ public:
      * auto is allowed for the parameters of the callback function.
      */
     template<typename F>
-    inline JSArray<T, AllocTemplate>& sort(F compareFunc) noexcept
+    inline JSArray<element_t, AllocTemplate>& sort(F compareFunc) noexcept
     {
         std::sort(this->begin(), this->end(), compareFunc);
         return *this;
@@ -377,10 +458,10 @@ public:
      * 
      * @return JSArray<T, AllocTemplate> 
      */
-    inline JSArray<T, AllocTemplate> toSorted() const noexcept
+    inline JSArray<element_t, AllocTemplate> toSorted() const noexcept
     {
-        JSArray<T, AllocTemplate> result = *this;
-        std::sort(result.begin(), result.end(), [](const T& a, const T& b){return a < b;});
+        JSArray<element_t, AllocTemplate> result = *this;
+        std::sort(result.begin(), result.end(), [](const element_t& a, const element_t& b){return a < b;});
         return result;
     }
 
@@ -395,205 +476,10 @@ public:
      * auto is allowed for the parameters of the callback function.
      */
     template<typename F>
-    inline JSArray<T, AllocTemplate> toSorted(F compareFunc) const noexcept
+    inline JSArray<element_t, AllocTemplate> toSorted(F compareFunc) const noexcept
     {
-        JSArray<T, AllocTemplate> result = *this;
+        JSArray<element_t, AllocTemplate> result = *this;
         std::sort(result.begin(), result.end(), compareFunc);
         return result;
     }
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// #include <concepts>
-// #include <vector>
-// #include <tuple>
-// #include <functional>
-
-// #include <iostream>
-
-// template<typename T>
-// struct A
-// {
-//     template<typename F>
-//     struct StandardCallBackTraits
-//     {
-//         /**
-//          * this was made to allow for auto lambdas, aka [](auto a, auto b){};
-//          * previously the function_traits forced on declared types in the callback
-//          * functions due to the method of meta programming.
-//          * 
-//          * Note about the following type sequences:
-//          * T&
-//          * T& std::size_t
-//          * T& std::size_t JSArray<T>&
-//          * 
-//          * In std::invoke_result_t && std::invocable, as far as I understand it,
-//          * these types are the ones that are "passed" into the function, and therefore
-//          * I choose the most unconstrained types that the callback function itself
-//          * can later choose to constrain with const, volatile, or just straight make a
-//          * copy without any reference. There might be the question of well all the methods
-//          * that are being added (map, reduce, etc) are const and therefore I should actually
-//          * pass in const T& and const JSArray<T>&, but I would prefer for the error to be
-//          * thrown closer to the calling method than at the compile time meta programming stage.
-//          * 
-//          * A note though. r value references are not allowed as types here
-//          * tbh I don't feel like I know them well enough to implement them so I'll
-//          * stay away.
-//          */
-
-
-//         // for some reason I can't specialize with template<> so I have to accept a template argument always... (F_copy fulfills that)
-//         template<typename F_copy, std::size_t arity> struct GetReturnType;
-//         template<typename F_copy> struct GetReturnType<F_copy, 1> {using type = std::invoke_result_t<F_copy, T&>;};
-//         template<typename F_copy> struct GetReturnType<F_copy, 2> {using type = std::invoke_result_t<F_copy, T&, std::size_t>;};
-//         template<typename F_copy> struct GetReturnType<F_copy, 3> {using type = std::invoke_result_t<F_copy, T&, std::size_t, A<T>&>;};
-
-//         // do this to make it more obvious where char(&)[*number of parameters*] comes from
-//         template<typename... Args>
-//         using Arity_Return_t = char(&)[sizeof...(Args)]; // can't return an array from a function, but can return a reference to an array;
-
-//         // please notice that the template parameters for both the return type and requires are the same other than the
-//         // the function type "F" in std::invocable. Make sure this is always true.
-//         static Arity_Return_t<T&>                     test() requires std::invocable<F, T&>;
-//         static Arity_Return_t<T&, std::size_t>        test() requires std::invocable<F, T&, std::size_t>;
-//         static Arity_Return_t<T&, std::size_t, A<T>&> test() requires std::invocable<F, T&, std::size_t, A<T>&>;
-
-//         static constexpr std::size_t arity = sizeof(test());
-//         using return_t = typename GetReturnType<F, arity>::type;
-//     };
-
-//     template<typename F, typename Accumulator_t>
-//     struct ReduceCallBackTraits
-//     {
-//         // virtually the same as StandardCallBackTraits except the range of acceptable
-//         // arity is [2, 4] and there needs to be an Accumulator_t
-
-//         template<typename F_copy, std::size_t arity> struct GetReturnType;
-//         template<typename F_copy> struct GetReturnType<F_copy, 2> {using type = std::invoke_result_t<F_copy, Accumulator_t&, T&>;};
-//         template<typename F_copy> struct GetReturnType<F_copy, 3> {using type = std::invoke_result_t<F_copy, Accumulator_t&, T&, std::size_t>;};
-//         template<typename F_copy> struct GetReturnType<F_copy, 4> {using type = std::invoke_result_t<F_copy, Accumulator_t&, T&, std::size_t, A<T>&>;};
-
-//         template<typename... Args>
-//         using Arity_Return_t = char(&)[sizeof...(Args)];
-
-//         static Arity_Return_t<Accumulator_t&, T&>                     test() requires std::invocable<F, Accumulator_t&, T&>;
-//         static Arity_Return_t<Accumulator_t&, T&, std::size_t>        test() requires std::invocable<F, Accumulator_t&, T&, std::size_t>;
-//         static Arity_Return_t<Accumulator_t&, T&, std::size_t, A<T>&> test() requires std::invocable<F, Accumulator_t&, T&, std::size_t, A<T>&>;
-
-//         static constexpr std::size_t arity = sizeof(test());
-//         using return_t = typename GetReturnType<F, arity>::type;
-//     };
-
-//     template<typename F>
-//     struct Question
-//     {
-//         template<typename F_copy, std::size_t arity> struct GetReturnType;
-//         template<typename F_copy> struct GetReturnType<F_copy, 1> {using type = std::invoke_result_t<F_copy, T&>;};
-//         template<typename F_copy> struct GetReturnType<F_copy, 2> {using type = std::invoke_result_t<F_copy, T&, std::size_t>;};
-//         template<typename F_copy> struct GetReturnType<F_copy, 3> {using type = std::invoke_result_t<F_copy, T&, std::size_t, A<T>&>;};
-
-//         template<typename... Args>
-//         using Arity_Return_t = char(&)[sizeof...(Args)];
-
-//         template<typename F_copy, typename... Ts>
-//         using TestType = decltype(std::declval<F_copy>()(std::declval<Ts>()...))(Ts...);
-
-//         template<typename F_copy>
-//         static Arity_Return_t<T&>                     test(std::function<TestType<F_copy, T&>>);
-//         template<typename F_copy>
-//         static Arity_Return_t<T&, std::size_t>        test(std::function<TestType<F_copy, T&, std::size_t>>);
-//         template<typename F_copy>
-//         static Arity_Return_t<T&, std::size_t, A<T>&> test(std::function<TestType<F_copy, T&, std::size_t, A<T>&>>);
-
-//         static constexpr std::size_t arity = sizeof(test<F>(std::declval<F>()));
-//         using return_t = typename GetReturnType<F, arity>::type;
-//     };
-// };
-
-
-// template<typename F_copy, typename... Ts>
-// using TestType = decltype(std::declval<F_copy>()(std::declval<Ts>()...))(Ts...);
-
-// int main(void)
-// {
-//     auto tester = [](const auto&, std::size_t){return 42;};
-
-//     using grand = A<int>;
-//     using lambda_t = decltype(tester);
-//     using zzz = std::remove_const<const int>::type(int, int, int);
-//     using dir = TestType<lambda_t, int&, int>;
-//     grand::Question<lambda_t>::arity;
-//     return 0;
-// }
