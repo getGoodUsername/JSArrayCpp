@@ -5,16 +5,13 @@
 #include <algorithm>
 
 /**
- * @brief A dynamic array class to emulate key java script array
+ * @brief A dynamic array class to emulate key javascript array
  * methods like map and reduce. Class inherits publicly from std::vector.
  * 
- * @tparam T                element type of dynamic array. (ex. int, JS<int>, double, std::string)
+ * @tparam T                element type of dynamic array. (ex. int, JSArray<int>, double, std::string)
  * @tparam AllocTemplate    allocator template class accepting only one template paramater "T" element type (ex. std::allocator)
  * 
- * @note
- * AllocTemplate is the way it is so you are allowed to return different types from
- * .map();
-* 
+ * @note AllocTemplate is the way it is so you are allowed to return different types from .map();
  */
 template<typename T, template<typename> class AllocTemplate = std::allocator>
 class JSArray : public std::vector<T, AllocTemplate<T>>
@@ -67,7 +64,7 @@ private:
     {
         /**
          * this struct (along with ReduceCallbackTraits) was made to allow for auto lambdas,
-         * aka [](auto a, auto b){}; previously the function_traits forced defined types,
+         * aka [](auto a, auto b){}; previously the function_traits struct forced defined types,
          * and due to the method of meta programming, the callbacks were not allowed to contain auto
          * parameters. This fixes that, and makes the interfaces just that much easier to use.
          * 
@@ -84,6 +81,7 @@ private:
          * that are being added (map, reduce, etc) are const and therefore I should actually
          * pass in const element_t& and const self_t&", but I would prefer for the error to be
          * thrown closer to the calling method than here at the compile time meta programming stage.
+         *
          * Oh also, index_t is not passed as a reference as I don't want the callback mucking
          * up my index variable. So it must always be passed by value. Having the callback
          * modify the index can result in very undefined behavior so we won't allow for that.
@@ -197,10 +195,11 @@ private:
 
         static_assert(
             argsCount <= 3 && argsCount >= 1,
-            "\nFunction signature should look like either of these three:\n"
-            "return_type (T val)\n"
-            "return_type (T val, std::size_t index)\n"
-            "return_type (T val, std::size_t index, const JSArray<T, AllocTemplate>& self)\n"
+            "\nFunction signature should look like either of these three: (1 to 3 params max)\n"
+            "return_type (auto&& val)\n"
+            "return_type (auto&& val, auto&& index)\n"
+            "return_type (auto&& val, auto&& index, auto&& self)\n"
+            "you can also define explicitly the types if you want. NOTE, the index type must be an integral type and NOT a reference\n"
         );
     }
 
@@ -211,7 +210,7 @@ private:
         // callback. Remember this is the "actual" accumulator variable and it's declared and defined internally.
         // The accumulator declared by the callback acts as nothing more than accessor. The callback will
         // restrict with cv qualifiers if needed. Also make sure its a ref just incase the accumulator
-        //  type is big and heavy to minimize copying.
+        // type is big and heavy to minimize copying.
 
         constexpr std::size_t argsCount = ReduceCallbackTraits<F, Accumulator_t>::arity;
         if constexpr (argsCount == 2)
@@ -223,10 +222,11 @@ private:
 
         static_assert(
             argsCount <= 4 && argsCount >= 2,
-            "\nFunction signature should look like either of these three:\n"
-            "return_type (*A Type* accumulator, T val)\n"
-            "return_type (*A Type* accumulator, T val, std::size_t index)\n"
-            "return_type (*A Type* accumulator, T val, std::size_t index, const JSArray<T, AllocTemplate>& self)\n"
+            "\nFunction signature should look like either of these three (2 to 4 params max):\n"
+            "return_type (auto&& accumulator, auto&& val)\n"
+            "return_type (auto&& accumulator, auto&& val, auto&& index)\n"
+            "return_type (auto&& accumulator, auto&& val, auto&& index, auto&& self)\n"
+            "you can also define explicitly the types if you want. NOTE, the index type must be an integral type and NOT a reference\n"
         );
     }
 
@@ -240,11 +240,8 @@ public:
      * @brief creates a new array populated with the results of calling a provided function on every element in the calling array
      * 
      * @tparam F callback type
-     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 1, 2, or 3 arguments
-     * @return JSArray<makeVectorEligibleType<getCallbackReturnType<F>>, AllocTemplate>
-     * 
-     * @warning
-     * No auto parameters allowed!
+     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 1, 2, or 3 arguments (value, index, self)
+     * @return JSArray<makeVectorEligibleType<typename StandardCallbackTraits<F>::return_t>, AllocTemplate>
      * 
      * @note
      * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map#parameters
@@ -267,17 +264,14 @@ public:
      * running the reducer across all elements of the array is a single value.
      * 
      * @tparam F callback type
-     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 2, 3, or 4 arguments
+     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 2, 3, or 4 arguments (accumulator, value, index, self)
      * @param initValue initial value for the accumulator param (0th paramater)
-     * @return getCallbackReturnType<F>
+     * @return Accumulator_t
      *
-     * @warning
-     * No auto parameters allowed!
-     * 
      * @note
      * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduce#parameters
      */
-    template<typename F, typename Accumulator_t>
+    template<typename Accumulator_t, typename F> // flipped Accumulator_t as first template param for when Accumulator_t can't be deduced don't have to put the type of F
     inline Accumulator_t reduce(F callback, const Accumulator_t& initValue) const noexcept
     {
         makeMutableType<Accumulator_t> result = initValue;
@@ -293,17 +287,14 @@ public:
      * @brief applies a function against an accumulator and each value of the array (from right-to-left) to reduce it to a single value. 
      * 
      * @tparam F callback type
-     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 2, 3, or 4 arguments
+     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 2, 3, or 4 arguments (accumulator, value, index, self)
      * @param initValue initial value for the accumulator param (0th paramater)
-     * @return getCallbackReturnType<F>
+     * @return Accumulator_t
      *
-     * @warning
-     * No auto parameters allowed!
-     * 
      * @note
      * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduceRight#parameters
      */
-    template<typename F, typename Accumulator_t>
+    template<typename Accumulator_t, typename F>
     inline Accumulator_t reduceRight(F callback, const Accumulator_t& initValue) const noexcept
     {
         makeMutableType<Accumulator_t> result = initValue;
@@ -319,10 +310,7 @@ public:
      * @brief method executes a provided callback function once for each array element.
      * 
      * @tparam F callback type
-     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 1, 2, or 3 arguments
-     * 
-     * @warning
-     * No auto parameters allowed!
+     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 1, 2, or 3 arguments (value, index, self)
      * 
      * @note
      * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/forEach#parameters
@@ -340,11 +328,8 @@ public:
      * @brief creates a copy of a portion of a given array, filtered down to just the elements from the given array that pass the test implemented by the provided function.
      * 
      * @tparam F callback type
-     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 1, 2, or 3 arguments
+     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 1, 2, or 3 arguments (value, index, self)
      * @return JSArray<T, AllocTemplate> 
-     * 
-     * @warning
-     * No auto parameters allowed!
      * 
      * @note
      * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/filter#parameters
@@ -371,11 +356,8 @@ public:
      * @brief tests whether all elements in the array pass the test implemented by the provided function.
      * 
      * @tparam F callback type
-     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 1, 2, or 3 arguments
+     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 1, 2, or 3 arguments (value, index, self)
      * @return bool
-     * 
-     * @warning
-     * No auto parameters allowed!
      * 
      * @note
      * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/every#parameters
@@ -399,11 +381,8 @@ public:
      * otherwise it returns false. It doesn't modify the array. 
      * 
      * @tparam F callback type
-     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 1, 2, or 3 arguments
+     * @param callback a lambda, a function ptr, or a functor (an object with operator() overloaded). Can be 1, 2, or 3 arguments (value, index, self)
      * @return bool
-     * 
-     * @warning
-     * No auto parameters allowed!
      * 
      * @note
      * Look here for more information on callback parameters: @ref https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/some#parameters
@@ -443,8 +422,6 @@ public:
      * @param compareFunc a lambda, a function ptr, or a functor (an object with operator() overloaded) with two arguments
      * @return JSArray<T, AllocTemplate>& 
      * 
-     * @note
-     * auto is allowed for the parameters of the callback function.
      */
     template<typename F>
     inline JSArray<element_t, AllocTemplate>& sort(F compareFunc) noexcept
@@ -472,8 +449,6 @@ public:
      * @param compareFunc a lambda, a function ptr, or a functor (an object with operator() overloaded) with two arguments
      * @return JSArray<T, AllocTemplate> 
      * 
-     * @note
-     * auto is allowed for the parameters of the callback function.
      */
     template<typename F>
     inline JSArray<element_t, AllocTemplate> toSorted(F compareFunc) const noexcept
